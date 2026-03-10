@@ -1,0 +1,16 @@
+# Paths are relative to the project root (where train.py lives)
+train_path: data/raw/train
+val_path: data/raw/valid
+test_path: data/raw/test
+
+# Image size fed to the model (both training and validation)
+# 640 is the standard YOLOv8n input size and suits the 1920x1080 source images
+img_size: 640
+
+# Detection classes
+nc: 1
+names: [ball]
+
+# DataLoader settings
+batch_size: 16
+num_workers: 4
