@@ -1,0 +1,7 @@
+names:
+- ball
+nc: 1
+path: /Users/Shared/git/codedesign/Trackshot-CodeDesign/data/raw/train
+test: /Users/Shared/git/codedesign/Trackshot-CodeDesign/data/raw/test
+train: /Users/Shared/git/codedesign/Trackshot-CodeDesign/data/raw/train
+val: /Users/Shared/git/codedesign/Trackshot-CodeDesign/data/raw/valid

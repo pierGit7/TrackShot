@@ -18,10 +18,9 @@ import math
 from pathlib import Path
 
 import cv2
+from dataset import BallDataset
 import numpy as np
 import torch
-
-from trackshot.data.dataset import BallDataset
 
 # BGR colour for bounding boxes (green)
 BOX_COLOR = (0, 200, 0)
