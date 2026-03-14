@@ -9,7 +9,7 @@ framework: "pytorch"
 
 
 training:
-  epochs: 10
+  epochs: 100
   lr: 0.001
   batch_size: 32
   force: false  # set to true (or pass training.force=true) to retrain even if a checkpoint exists
