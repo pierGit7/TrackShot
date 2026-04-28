@@ -1,0 +1,11 @@
+idf_component_register(
+    SRCS
+        "main.cpp"
+        "camera.cpp"
+        "../inference/inference.cpp"
+        "../model/model.c"
+    INCLUDE_DIRS
+        "."
+        "../inference"
+        "../model"
+)

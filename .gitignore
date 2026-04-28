@@ -191,3 +191,6 @@ cython_debug/
 .pypirc
 runs/
 outputs/
+trackshot/esp32/managed_components
+.vscode/
+calibration_*

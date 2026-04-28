@@ -1,11 +1,11 @@
 # Paths are relative to the project root (where train.py lives)
-train_path: data/raw/train
-val_path: data/raw/valid
-test_path: data/raw/test
+train_path: data/raw/tracking-soccerball-yolov8/dataset/Train
+val_path: data/raw/tracking-soccerball-yolov8/dataset/Validation
+test_path: data/raw/tracking-soccerball-yolov8/dataset/Validation
 
 # Image size fed to the model (both training and validation)
-# 640 is the standard YOLOv8n input size and suits the 1920x1080 source images
-img_size: 640
+# 96 is the target resolution for the MCU
+img_size: 96
 
 # Detection classes
 nc: 1

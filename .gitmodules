@@ -1,0 +1,3 @@
+[submodule "modules/local-image-capture"]
+	path = modules/local-image-capture
+	url = https://github.com/pierGit7/local-image-capture.git

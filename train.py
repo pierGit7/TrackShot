@@ -73,9 +73,9 @@ def _write_data_yaml(cfg: DictConfig, dest: Path) -> Path:
 
     data_yaml = {
         "path": abs_path(cfg.data.train_path),  # base; not used directly by splits below
-        "train": abs_path(cfg.data.train_path),
-        "val": abs_path(cfg.data.val_path),
-        "test": abs_path(cfg.data.test_path),
+        "train": str(Path(abs_path(cfg.data.train_path)) / "images"),
+        "val": str(Path(abs_path(cfg.data.val_path)) / "images"),
+        "test": str(Path(abs_path(cfg.data.test_path)) / "images"),
         "nc": int(cfg.data.nc),
         "names": OmegaConf.to_container(cfg.data.names, resolve=True),
     }
