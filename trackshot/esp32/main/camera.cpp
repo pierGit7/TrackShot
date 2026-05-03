@@ -148,25 +148,49 @@ bool camera_init(void)
 /**
  * Capture a frame and convert to tensor of size TENSOR_W x TENSOR_H x TENSOR_C.
  * @param frame_tensor Pointer to the output tensor buffer (must be at least TENSOR_W x TENSOR_H x TENSOR_C bytes).
- * @return true on success, false on failure.
+ * @return Frame buffer pointer on success, nullptr on failure.
  */
-bool camera_capture_frame(int8_t *frame_tensor)
+camera_fb_t* camera_capture_frame(int8_t *frame_tensor)
 {
     // Capture a frame from the camera
     camera_fb_t *fb = esp_camera_fb_get();
     if (!fb) {
         ESP_LOGE(TAG, "Failed to get frame buffer.");
-        return false;
+        return nullptr;
     }
 
     // Convert the frame buffer to a model input tensor
     bool success = fb_to_tensor_rgb(fb, frame_tensor);
     if (!success) {
         ESP_LOGE(TAG, "Failed to convert frame to tensor.");
+        esp_camera_fb_return(fb);
+        return nullptr;
     }
 
-    // Return the frame buffer to the driver
-    esp_camera_fb_return(fb);
+    return fb;
+}
 
-    return success;
+/**
+ * Return the frame buffer to the camera driver.
+ */
+void camera_return_frame(camera_fb_t *fb)
+{
+    if (fb) {
+        esp_camera_fb_return(fb);
+    }
+}
+
+/**
+ * Convert RGB565 to JPEG format.
+ * Uses esp_camera fmt2jpg.
+ */
+bool camera_get_jpeg(const camera_fb_t *fb, uint8_t **out_jpg, size_t *out_len)
+{
+    if (!fb || !out_jpg || !out_len) return false;
+    return fmt2jpg(fb->buf, fb->len, fb->width, fb->height, fb->format, 30, out_jpg, out_len);
+}
+
+void camera_free_jpeg(uint8_t *jpg)
+{
+    if (jpg) free(jpg);
 }

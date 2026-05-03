@@ -1,0 +1,7 @@
+names:
+- ball
+nc: 1
+path: /Users/Shared/git/codedesign/Trackshot-CodeDesign/data/processed/tiles/Train
+test: /Users/Shared/git/codedesign/Trackshot-CodeDesign/data/processed/tiles/Validation/images
+train: /Users/Shared/git/codedesign/Trackshot-CodeDesign/data/processed/tiles/Train/images
+val: /Users/Shared/git/codedesign/Trackshot-CodeDesign/data/processed/tiles/Validation/images

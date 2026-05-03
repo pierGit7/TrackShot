@@ -1,16 +1,9 @@
-# Paths are relative to the project root (where train.py lives)
-train_path: data/raw/tracking-soccerball-yolov8/dataset/Train
-val_path: data/raw/tracking-soccerball-yolov8/dataset/Validation
-test_path: data/raw/tracking-soccerball-yolov8/dataset/Validation
-
-# Image size fed to the model (both training and validation)
-# 96 is the target resolution for the MCU
-img_size: 96
-
-# Detection classes
-nc: 1
-names: [ball]
-
-# DataLoader settings
 batch_size: 16
+img_size: 128
+names:
+- ball
+nc: 1
 num_workers: 4
+test_path: data/processed/tiles/Validation
+train_path: data/processed/tiles/Train
+val_path: data/processed/tiles/Validation

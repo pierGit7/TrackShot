@@ -1,9 +1,8 @@
-# YOLOv8n – smallest YOLO variant; good for TFLite / ESP32-S3 deployment
-model_type: yolov8n
+# YOLOv8-pico – custom ultra-small YOLO variant; ideal for TFLite / ESP32-S3 deployment
+model_type: yolov8-pico
 
 # Number of detection classes (single class: ball)
 nc: 1
 
-# Pretrained weights – "yolov8n.pt" downloads from ultralytics hub on first run.
-# Set to null to train from scratch.
-weights: checkpoints/yolov8n.pt
+# Pretrained weights – set to null to train from scratch using the custom YAML
+weights: null

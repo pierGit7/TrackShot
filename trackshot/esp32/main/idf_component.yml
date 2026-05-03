@@ -4,3 +4,4 @@ dependencies:
     version: '>=4.1.0'
   espressif/esp32-camera: '*'
   espressif/esp-tflite-micro: '*'
+  espressif/esp-nn: '*'

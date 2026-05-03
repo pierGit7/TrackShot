@@ -36,6 +36,10 @@ def build_model(cfg: DictConfig) -> YOLO:
         model = YOLO(weights)  # loads pretrained backbone + head
     else:
         # Train from scratch using the architecture YAML
-        model = YOLO(f"{cfg.model_type}.yaml")
+        if cfg.model_type == "yolov8-pico":
+            import os
+            model = YOLO(os.path.join("trackshot", "models", "yolov8-pico.yaml"))
+        else:
+            model = YOLO(f"{cfg.model_type}.yaml")
 
     return model

@@ -13,17 +13,12 @@
 #include "../main/camera.h"
 #include "../model/model.h"
 
+// Include ESP-NN Optimizations
+#include "esp_nn.h"
+
 // Include TFLM
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
 #include "tensorflow/lite/micro/micro_interpreter.h"
-
-struct BoundingBox {
-    float cx;
-    float cy;
-    float w;
-    float h;
-    float confidence;
-};
 
 static float calculate_iou(const BoundingBox& box1, const BoundingBox& box2) {
     float x1_min = box1.cx - box1.w / 2.0f;
@@ -124,6 +119,8 @@ bool inference_init()
         return false;
     }
 
+    ESP_LOGI(TAG_INF, "Tensor Arena used bytes: %d", interpreter->arena_used_bytes());
+
     input = interpreter->input(0);
     output = interpreter->output(0);
 
@@ -153,7 +150,7 @@ bool inference_init()
     return true;
 }
 
-bool inference_run(const int8_t *image_tensor)
+bool inference_run(const int8_t *image_tensor, std::vector<BoundingBox>& out_boxes)
 {
     if (!interpreter || !input || !output || !image_tensor)
     {
@@ -238,12 +235,7 @@ bool inference_run(const int8_t *image_tensor)
         }
     }
 
-    // Print final boxes over Serial
-    for (const auto& box : final_boxes) {
-        printf("DETECT: X:%.2f, Y:%.2f, W:%.2f, H:%.2f, CONF:%.2f\n", 
-               box.cx, box.cy, box.w, box.h, box.confidence);
-    }
-
+    out_boxes = final_boxes;
     return true;
 }
 
