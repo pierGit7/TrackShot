@@ -70,11 +70,15 @@ void output_worker_task(void *pvParameters)
         for (size_t i = 0; i < res.boxes.size(); ++i) {
             const auto& b = res.boxes[i];
             
-            // Scale from tensor coords to original image pixels
-            float cx_img = offset_x + (b.cx / (float)TENSOR_W) * min_dim;
-            float cy_img = offset_y + (b.cy / (float)TENSOR_H) * min_dim;
-            float w_img = (b.w / (float)TENSOR_W) * min_dim;
-            float h_img = (b.h / (float)TENSOR_H) * min_dim;
+            // If coordinates are mostly < 1.0 (normalized), multiply by min_dim. 
+            // If they are > 1.0 (absolute tensor coordinates), divide by TENSOR scale.
+            float scaling_x = (b.cx <= 1.0f && b.cx >= 0.0f) ? min_dim : (min_dim / (float)TENSOR_W);
+            float scaling_y = (b.cy <= 1.0f && b.cy >= 0.0f) ? min_dim : (min_dim / (float)TENSOR_H);
+
+            float cx_img = offset_x + b.cx * scaling_x;
+            float cy_img = offset_y + b.cy * scaling_y;
+            float w_img = b.w * scaling_x;
+            float h_img = b.h * scaling_y;
             
             // Convert center to top-left
             float x_tl = cx_img - w_img / 2.0f;
@@ -150,6 +154,12 @@ void loop(void)
         
         if (camera_get_jpeg(fb, &jpg_buf, &jpg_len)) {
             int64_t t_jpeg = esp_timer_get_time();
+
+            ESP_LOGI(TAG, "TIMING (ms) | Cam: %lld | Infer: %lld | JPEG: %lld | Total Main: %lld",
+                     (t_cam - t_start) / 1000,
+                     (t_infer - t_cam) / 1000,
+                     (t_jpeg - t_infer) / 1000,
+                     (t_jpeg - t_start) / 1000);
 
             // Dispatch to worker thread
             InferenceResult res;

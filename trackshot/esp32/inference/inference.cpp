@@ -47,8 +47,12 @@ static float calculate_iou(const BoundingBox& box1, const BoundingBox& box2) {
     return inter_area / (box1_area + box2_area - inter_area);
 }
 
+float sigmoid(float x) {
+    return 1.0f / (1.0f + expf(-x));
+}
+
 // YOLO-style models typically need far more than 30KB.
-#define TENSOR_ARENA_SIZE (2 * 1024 * 1024)
+#define TENSOR_ARENA_SIZE (185 * 1024)
 
 static const tflite::Model *model = nullptr;
 static tflite::MicroInterpreter *interpreter = nullptr;
@@ -67,7 +71,7 @@ bool inference_init()
     }
 
     tensor_arena = static_cast<uint8_t *>(
-        heap_caps_malloc(TENSOR_ARENA_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        heap_caps_malloc(TENSOR_ARENA_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     if (!tensor_arena)
     {
         ESP_LOGE(TAG_INF, "Failed to allocate tensor arena in PSRAM");
@@ -182,15 +186,42 @@ bool inference_run(const int8_t *image_tensor, std::vector<BoundingBox>& out_box
         return false;
     }
 
-    if (output->dims->size != 3 || output->dims->data[1] != 5) {
-        ESP_LOGE(TAG_INF, "Unexpected output shape! Expected [1, 5, N], got dims: %d", output->dims->size);
+    // Fix: Don't require output dims to have specific shape - just check we have data
+    if (output->dims->size < 2) {
+        ESP_LOGE(TAG_INF, "Unexpected output shape! dims: %d", output->dims->size);
         return false;
     }
 
-    const int num_anchors = output->dims->data[2];
-    const float conf_threshold = 0.75f;
+    // Calculate num_anchors - handle different possible shapes
+    int num_anchors = 0;
+    if (output->dims->size == 3 && output->dims->data[1] == 5) {
+        // Shape [1, 5, N]
+        num_anchors = output->dims->data[2];
+    } else if (output->dims->size == 2) {
+        // Shape [1, N*5] or [N, 5]
+        int total_values = output->dims->data[1];
+        if (total_values % 5 == 0) {
+            num_anchors = total_values / 5;
+        }
+    } else {
+        // Flat output - calculate from bytes
+        int total_values = output->bytes / sizeof(float);
+        if (total_values % 5 == 0) {
+            num_anchors = total_values / 5;
+        }
+    }
+    
+    if (num_anchors == 0) {
+        ESP_LOGE(TAG_INF, "Could not determine number of anchors");
+        return false;
+    }
+    
+    ESP_LOGI(TAG_INF, "num_anchors: %d", num_anchors);
+    
+    const float conf_threshold = 0.90f; 
     std::vector<BoundingBox> valid_boxes;
 
+    // Dequantization lambda function
     auto get_val = [&](int index) -> float {
         if (output->type == kTfLiteFloat32) {
             return output->data.f[index];
@@ -201,18 +232,44 @@ bool inference_run(const int8_t *image_tensor, std::vector<BoundingBox>& out_box
         }
         return 0.0f;
     };
-
-    // Filter by confidence directly from Tensor
+    
+    // Debug: Print first few anchors
+    ESP_LOGI(TAG_INF, "First 10 anchors (after sigmoid):");
+    for (int i = 0; i < 10 && i < num_anchors; i++) {
+        int base = i * 5;
+        ESP_LOGI(TAG_INF, "Anchor %d: cx=%.3f cy=%.3f w=%.3f h=%.3f conf=%.3f",
+                 i, 
+                 sigmoid(get_val(base+0)),
+                 sigmoid(get_val(base+1)),
+                 sigmoid(get_val(base+2)),
+                 sigmoid(get_val(base+3)),
+                 sigmoid(get_val(base+4)));
+    }
+    
+    // Process all anchors - FIXED: Use sigmoid for ALL values (no expf!)
     for (int i = 0; i < num_anchors; ++i) {
-        float conf = get_val(4 * num_anchors + i);
+        int base_idx = i * 5;
+
+        // Raw values from model
+        float cx_raw = get_val(base_idx + 0);
+        float cy_raw = get_val(base_idx + 1);
+        float w_raw  = get_val(base_idx + 2);
+        float h_raw  = get_val(base_idx + 3);
+        float conf_raw = get_val(base_idx + 4);
+
+        // Apply sigmoid to ALL values (based on your debug showing values in 0-1 range)
+        float cx = sigmoid(cx_raw);
+        float cy = sigmoid(cy_raw);
+        float w = sigmoid(w_raw);      // Changed from expf to sigmoid
+        float h = sigmoid(h_raw);      // Changed from expf to sigmoid
+        float conf = sigmoid(conf_raw);
+
         if (conf > conf_threshold) {
-            float cx = get_val(0 * num_anchors + i);
-            float cy = get_val(1 * num_anchors + i);
-            float w  = get_val(2 * num_anchors + i);
-            float h  = get_val(3 * num_anchors + i);
             valid_boxes.push_back({cx, cy, w, h, conf});
         }
     }
+
+    ESP_LOGI(TAG_INF, "Detections before NMS: %d", (int)valid_boxes.size());
 
     // Sort by confidence (highest to lowest) for NMS
     std::sort(valid_boxes.begin(), valid_boxes.end(), [](const BoundingBox& a, const BoundingBox& b) {
@@ -235,7 +292,8 @@ bool inference_run(const int8_t *image_tensor, std::vector<BoundingBox>& out_box
         }
     }
 
+    ESP_LOGI(TAG_INF, "Detections after NMS: %d", (int)final_boxes.size());
+    
     out_boxes = final_boxes;
     return true;
 }
-
