@@ -53,8 +53,9 @@ struct InferenceResult {
 // Worker task pinned to Core 1 (APP_CPU) to handle Base64 and string formatting
 void output_worker_task(void *pvParameters)
 {
-    InferenceResult res;
-    while (xQueueReceive(result_queue, &res, portMAX_DELAY) == pdTRUE) {
+    InferenceResult *res_ptr;
+    while (xQueueReceive(result_queue, &res_ptr, portMAX_DELAY) == pdTRUE) {
+        InferenceResult &res = *res_ptr;
         int64_t t_start = esp_timer_get_time();
         
         // Encode the JPEG explicitly to a Base64 string
@@ -72,13 +73,15 @@ void output_worker_task(void *pvParameters)
             
             // If coordinates are mostly < 1.0 (normalized), multiply by min_dim. 
             // If they are > 1.0 (absolute tensor coordinates), divide by TENSOR scale.
-            float scaling_x = (b.cx <= 1.0f && b.cx >= 0.0f) ? min_dim : (min_dim / (float)TENSOR_W);
-            float scaling_y = (b.cy <= 1.0f && b.cy >= 0.0f) ? min_dim : (min_dim / (float)TENSOR_H);
-
-            float cx_img = offset_x + b.cx * scaling_x;
-            float cy_img = offset_y + b.cy * scaling_y;
-            float w_img = b.w * scaling_x;
-            float h_img = b.h * scaling_y;
+            // cx, cy are always normalized [0,1] from sigmoid. w, h are raw model values.
+            // Clamp w/h to [0,1] defensively before scaling.
+            float w_norm = std::min(std::max(b.w, 0.0f), 1.0f);
+            float h_norm = std::min(std::max(b.h, 0.0f), 1.0f);
+                    
+            float cx_img = offset_x + b.cx * min_dim;
+            float cy_img = offset_y + b.cy * min_dim;
+            float w_img  = w_norm * min_dim;
+            float h_img  = h_norm * min_dim;
             
             // Convert center to top-left
             float x_tl = cx_img - w_img / 2.0f;
@@ -101,6 +104,7 @@ void output_worker_task(void *pvParameters)
         // Cleanup
         camera_free_jpeg(res.jpg_buf);
         camera_return_frame(res.fb);
+        delete res_ptr;
     }
 }
 
@@ -122,7 +126,7 @@ void setup()
     }
     
     // Create queue and pin worker task to APP_CPU (Core 1)
-    result_queue = xQueueCreate(2, sizeof(InferenceResult));
+    result_queue = xQueueCreate(2, sizeof(InferenceResult *));
     xTaskCreatePinnedToCore(output_worker_task, "output_worker", 8192, NULL, 5, NULL, 1);
 
 
@@ -161,19 +165,20 @@ void loop(void)
                      (t_jpeg - t_infer) / 1000,
                      (t_jpeg - t_start) / 1000);
 
-            // Dispatch to worker thread
-            InferenceResult res;
-            res.jpg_buf = jpg_buf;
-            res.jpg_len = jpg_len;
-            res.boxes = boxes;
-            res.fb = fb;
-            res.src_w = fb->width;
-            res.src_h = fb->height;
-            
+            // Dispatch to worker thread — heap-allocate so the vector outlives this scope
+            InferenceResult *res = new InferenceResult();
+            res->jpg_buf = jpg_buf;
+            res->jpg_len = jpg_len;
+            res->boxes   = std::move(boxes);
+            res->fb      = fb;
+            res->src_w   = fb->width;
+            res->src_h   = fb->height;
+
             if (xQueueSend(result_queue, &res, 0) != pdTRUE) {
                 ESP_LOGW(TAG, "Queue full, dropping frame output");
                 camera_free_jpeg(jpg_buf);
                 camera_return_frame(fb);
+                delete res;
             }
         } else {
             ESP_LOGE(TAG, "Failed to encode JPEG.");

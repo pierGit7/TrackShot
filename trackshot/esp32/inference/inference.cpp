@@ -192,19 +192,21 @@ bool inference_run(const int8_t *image_tensor, std::vector<BoundingBox>& out_box
         return false;
     }
 
-    // Calculate num_anchors - handle different possible shapes
+    // Calculate num_anchors from output shape.
+    // YOLOv8 TFLite export (Ultralytics) produces [1, 5, N] — channel-first layout:
+    //   channel 0: cx  (normalized [0,1])
+    //   channel 1: cy  (normalized [0,1])
+    //   channel 2: w   (normalized, may slightly exceed 1 for large boxes)
+    //   channel 3: h   (normalized, may slightly exceed 1 for large boxes)
+    //   channel 4: class confidence logit
     int num_anchors = 0;
     if (output->dims->size == 3 && output->dims->data[1] == 5) {
-        // Shape [1, 5, N]
+        // Shape [1, 5, N] — channel-first (standard YOLOv8 TFLite)
         num_anchors = output->dims->data[2];
-    } else if (output->dims->size == 2) {
-        // Shape [1, N*5] or [N, 5]
-        int total_values = output->dims->data[1];
-        if (total_values % 5 == 0) {
-            num_anchors = total_values / 5;
-        }
+    } else if (output->dims->size == 3 && output->dims->data[2] == 5) {
+        // Shape [1, N, 5] — anchor-first (some custom exports)
+        num_anchors = output->dims->data[1];
     } else {
-        // Flat output - calculate from bytes
         int total_values = output->bytes / sizeof(float);
         if (total_values % 5 == 0) {
             num_anchors = total_values / 5;
@@ -218,51 +220,63 @@ bool inference_run(const int8_t *image_tensor, std::vector<BoundingBox>& out_box
     
     ESP_LOGI(TAG_INF, "num_anchors: %d", num_anchors);
     
-    const float conf_threshold = 0.90f; 
+    // Confidence threshold: ch4 is a raw logit; sigmoid(ch4) > threshold.
+    // Python analysis of best_int8.tflite confirms: ball anchor has conf ≈ 0.70,
+    // background anchors have conf ≈ 0.50.  0.60 cleanly separates signal from noise.
+    const float conf_threshold = 0.60f;
     std::vector<BoundingBox> valid_boxes;
 
-    // Dequantization lambda function
+    // Read one tensor value (handles float32 and quantized INT8/UINT8)
     auto get_val = [&](int index) -> float {
         if (output->type == kTfLiteFloat32) {
             return output->data.f[index];
         } else if (output->type == kTfLiteInt8) {
-            return (static_cast<float>(output->data.int8[index]) - static_cast<float>(output->params.zero_point)) * output->params.scale;
+            return (static_cast<float>(output->data.int8[index]) -
+                    static_cast<float>(output->params.zero_point)) * output->params.scale;
         } else if (output->type == kTfLiteUInt8) {
-            return (static_cast<float>(output->data.uint8[index]) - static_cast<float>(output->params.zero_point)) * output->params.scale;
+            return (static_cast<float>(output->data.uint8[index]) -
+                    static_cast<float>(output->params.zero_point)) * output->params.scale;
         }
         return 0.0f;
     };
-    
-    // Debug: Print first few anchors
-    ESP_LOGI(TAG_INF, "First 10 anchors (after sigmoid):");
-    for (int i = 0; i < 10 && i < num_anchors; i++) {
-        int base = i * 5;
-        ESP_LOGI(TAG_INF, "Anchor %d: cx=%.3f cy=%.3f w=%.3f h=%.3f conf=%.3f",
-                 i, 
-                 sigmoid(get_val(base+0)),
-                 sigmoid(get_val(base+1)),
-                 sigmoid(get_val(base+2)),
-                 sigmoid(get_val(base+3)),
-                 sigmoid(get_val(base+4)));
+
+    // Debug: print the top-5 anchors by confidence (channel-first layout)
+    {
+        float best_conf[5] = {};
+        int   best_idx[5]  = {-1,-1,-1,-1,-1};
+        for (int i = 0; i < num_anchors; ++i) {
+            float c = sigmoid(get_val(4 * num_anchors + i));
+            for (int k = 0; k < 5; ++k) {
+                if (c > best_conf[k]) {
+                    for (int j = 4; j > k; --j) { best_conf[j]=best_conf[j-1]; best_idx[j]=best_idx[j-1]; }
+                    best_conf[k]=c; best_idx[k]=i; break;
+                }
+            }
+        }
+        ESP_LOGI(TAG_INF, "Top-5 anchors by conf:");
+        for (int k = 0; k < 5 && best_idx[k] >= 0; ++k) {
+            int i = best_idx[k];
+            ESP_LOGI(TAG_INF, "  anchor %d: cx=%.3f cy=%.3f w=%.3f h=%.3f conf=%.3f",
+                i,
+                get_val(0 * num_anchors + i),
+                get_val(1 * num_anchors + i),
+                get_val(2 * num_anchors + i),
+                get_val(3 * num_anchors + i),
+                best_conf[k]);
+        }
     }
-    
-    // Process all anchors - FIXED: Use sigmoid for ALL values (no expf!)
+
+    // Channel-first [5, N] layout: value for channel c, anchor i → index c*num_anchors+i
     for (int i = 0; i < num_anchors; ++i) {
-        int base_idx = i * 5;
+        float cx   = get_val(0 * num_anchors + i);  // already normalized [0,1]
+        float cy   = get_val(1 * num_anchors + i);  // already normalized [0,1]
+        float w    = get_val(2 * num_anchors + i);  // normalized (may slightly exceed 1)
+        float h    = get_val(3 * num_anchors + i);  // normalized (may slightly exceed 1)
+        float conf = sigmoid(get_val(4 * num_anchors + i));  // logit → probability
 
-        // Raw values from model
-        float cx_raw = get_val(base_idx + 0);
-        float cy_raw = get_val(base_idx + 1);
-        float w_raw  = get_val(base_idx + 2);
-        float h_raw  = get_val(base_idx + 3);
-        float conf_raw = get_val(base_idx + 4);
-
-        // Apply sigmoid to ALL values (based on your debug showing values in 0-1 range)
-        float cx = sigmoid(cx_raw);
-        float cy = sigmoid(cy_raw);
-        float w = sigmoid(w_raw);      // Changed from expf to sigmoid
-        float h = sigmoid(h_raw);      // Changed from expf to sigmoid
-        float conf = sigmoid(conf_raw);
+        // Reject anchors with out-of-range coordinates (garbage background predictions)
+        if (cx < 0.0f || cx > 1.0f || cy < 0.0f || cy > 1.0f) continue;
+        if (w <= 0.0f || h <= 0.0f) continue;
 
         if (conf > conf_threshold) {
             valid_boxes.push_back({cx, cy, w, h, conf});
@@ -277,7 +291,7 @@ bool inference_run(const int8_t *image_tensor, std::vector<BoundingBox>& out_box
     });
 
     // Apply Non-Maximum Suppression (NMS)
-    const float nms_iou_threshold = 0.45f;
+    const float nms_iou_threshold = 0.30f;
     std::vector<BoundingBox> final_boxes;
     for (const auto& box : valid_boxes) {
         bool keep = true;
